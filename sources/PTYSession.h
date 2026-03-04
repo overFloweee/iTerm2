@@ -560,6 +560,13 @@ backgroundColor:(NSColor *)backgroundColor;
 // Has it been at least a second since isProcessing became false?
 @property(nonatomic, readonly) BOOL isIdle;
 
+// 在指定时间戳之后是否有用户输入（用于判断活动指示器是否应被抑制）
+- (BOOL)hadUserInputSinceTimestamp:(NSTimeInterval)timestamp;
+
+// 自上次重置以来的输出字节数（用于区分 TUI 刷新和真正的新内容）
+@property(nonatomic, readonly) NSUInteger outputBytesSinceActivityReset;
+- (void)resetOutputBytesForActivityTracking;
+
 // Tries to return the current local working directory without resolving symlinks (possible if
 // shell integration is on). If that can't be done then the current local working directory with
 // symlinks resolved is returned.

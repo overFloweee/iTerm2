@@ -169,6 +169,13 @@ static void SetAgainstGrainDim(BOOL isVertical, NSSize *dest, CGFloat value) {
     // Does any session have new output?
     BOOL newOutput_;
 
+    // 用于抑制 TUI 应用空闲刷新导致的虚假活动指示器
+    BOOL _wasForeground;
+    BOOL _hasBeenVisited;  // 是否曾经被用户访问过（未访问的 tab 不受新逻辑影响）
+    BOOL _hadInputDuringVisit;  // 本次前台访问期间是否有用户输入
+    NSTimeInterval _visitStartTime;  // 本次前台访问的开始时间
+    NSTimeInterval _lastByteResetTime;  // 上次重置输出字节计数器的时间
+
     // The root view of this tab. May be a SolidColorView for tmux tabs or the
     // same as root_ otherwise (the normal case).
     __weak NSView *tabView_;
@@ -1437,6 +1444,38 @@ static void SetAgainstGrainDim(BOOL isVertical, NSSize *dest, CGFloat value) {
 
 - (void)updateLabelAttributes {
     DLog(@"PTYTab updateLabelAttributes for tab %d", objectCount_);
+
+    // 检测前台↔后台切换，管理活动指示器状态
+    BOOL isForeground = [self isForegroundTab];
+    if (!_wasForeground && isForeground) {
+        // 后台→前台：开始新的访问周期
+        _hasBeenVisited = YES;
+        _visitStartTime = [NSDate timeIntervalSinceReferenceDate];
+        _hadInputDuringVisit = NO;
+    }
+    if (_wasForeground && !isForeground) {
+        // 前台→后台：检查本次访问期间是否有用户输入，重置输出字节计数器
+        NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
+        for (PTYSession *session in [self sessions]) {
+            if ([session hadUserInputSinceTimestamp:_visitStartTime]) {
+                _hadInputDuringVisit = YES;
+            }
+            [session resetOutputBytesForActivityTracking];
+        }
+        _lastByteResetTime = now;
+    }
+    // 后台时每 5 秒重置一次字节计数器，防止 TUI 刷新慢慢累积触发阈值
+    static const NSTimeInterval kByteWindowSeconds = 5.0;
+    if (!isForeground && _hasBeenVisited) {
+        NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
+        if (now - _lastByteResetTime > kByteWindowSeconds) {
+            for (PTYSession *session in [self sessions]) {
+                [session resetOutputBytesForActivityTracking];
+            }
+            _lastByteResetTime = now;
+        }
+    }
+    _wasForeground = isForeground;
 
     if ([[self activeSession] exited]) {
         // Session has terminated.
@@ -6492,6 +6531,27 @@ typedef struct {
 
 - (void)setLabelAttributesForActiveTab:(BOOL)notify {
     BOOL isBackgroundTab = [[tabViewItem_ tabView] selectedTabViewItem] != [self tabViewItem];
+
+    // 智能活动指示器：区分 TUI 空闲刷新和真正的新内容
+    // 仅对访问过的 tab 生效，未访问的 tab 保持原始行为
+    // 规则①：本次访问没打过字 → 只是看了一眼，不亮蓝点
+    // 规则②：打过字 → 检查最近 5 秒窗口内的输出量，超过阈值才亮
+    static const NSUInteger kActivityByteThreshold = 10240;  // 10KB / 5秒 ≈ 2KB/秒
+    if (isBackgroundTab && _hasBeenVisited) {
+        if (!_hadInputDuringVisit) {
+            [self setIsProcessing:NO];
+            return;
+        }
+        NSUInteger totalBytes = 0;
+        for (PTYSession *session in [self sessions]) {
+            totalBytes += session.outputBytesSinceActivityReset;
+        }
+        if (totalBytes < kActivityByteThreshold) {
+            [self setIsProcessing:NO];
+            return;
+        }
+    }
+
     [self setIsProcessing:[self anySessionIsProcessing] && ![self isForegroundTab]];
 
     if (![[self activeSession] havePostedNewOutputNotification] &&

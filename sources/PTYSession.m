@@ -619,6 +619,7 @@ typedef NS_ENUM(NSUInteger, PTYSessionTurdType) {
 
     BOOL _profileDidChange;
     NSInteger _estimatedThroughput;
+    NSUInteger _outputBytesSinceActivityReset;
     iTermPasteboardReporter *_pasteboardReporter;
     iTermSSHState _sshState;
     // Stored browser interaction state for restoration
@@ -5569,6 +5570,21 @@ webViewConfiguration:(WKWebViewConfiguration *)webViewConfiguration
     
     NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
     return (now - _lastOutputIgnoringOutputAfterResizing) < _idleTime;
+}
+
+- (BOOL)hadUserInputSinceTimestamp:(NSTimeInterval)timestamp {
+    if (!_lastNonFocusReportingWrite) {
+        return NO;
+    }
+    return [_lastNonFocusReportingWrite timeIntervalSinceReferenceDate] > timestamp;
+}
+
+- (NSUInteger)outputBytesSinceActivityReset {
+    return _outputBytesSinceActivityReset;
+}
+
+- (void)resetOutputBytesForActivityTracking {
+    _outputBytesSinceActivityReset = 0;
 }
 
 // You're idle if it's been one second since isProcessing was true.
@@ -17485,6 +17501,7 @@ static const NSTimeInterval PTYSessionFocusReportBellSquelchTimeIntervalThreshol
     DLog(@"estimated throughput: %@", @(_estimatedThroughput));
 
     if (update.numberOfBytesExecutedExcludingInBandSignaling > 0) {
+        _outputBytesSinceActivityReset += update.numberOfBytesExecutedExcludingInBandSignaling;
         DLog(@"Session %@ (%@) is processing", self, _nameController.presentationSessionTitle);
         if (![self haveResizedRecently]) {
             _lastOutputIgnoringOutputAfterResizing = [NSDate timeIntervalSinceReferenceDate];
