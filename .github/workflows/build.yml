@@ -28,18 +28,19 @@ jobs:
 
       - name: Build Development
         run: |
+          set -o pipefail
           # 重试最多 3 次，处理 Xcode 26.2 的 ibtoold 崩溃问题
           for attempt in 1 2 3; do
             echo "::group::Attempt $attempt of 3"
             set +e
             make Development BUILD_DIR="$PWD/build" 2>&1 | tee build_output.txt
-            exit_code=$?
+            exit_code=${PIPESTATUS[0]}
             set -e
             echo "::endgroup::"
 
             if [ $exit_code -eq 0 ]; then
               echo "Build succeeded on attempt $attempt"
-              exit 0
+              break
             fi
 
             if grep -q "CompileAssetCatalogVariant failed\|IBPlatformToolFailureException\|The tool closed the connection" build_output.txt; then
@@ -60,10 +61,21 @@ jobs:
             fi
           done
 
+      - name: Verify app bundle
+        run: |
+          APP="build/Development/iTerm2.app/Contents/MacOS/iTerm2"
+          if [ ! -f "$APP" ]; then
+            echo "::error::iTerm2 executable not found at $APP"
+            ls -laR build/Development/iTerm2.app/Contents/MacOS/ || true
+            exit 1
+          fi
+          echo "App binary size: $(du -h "$APP" | cut -f1)"
+
       - name: Package app
         run: |
           cd build/Development
           ditto -c -k --sequesterRsrc --keepParent iTerm2.app iTerm2.app.zip
+          echo "Zip size: $(du -h iTerm2.app.zip | cut -f1)"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
