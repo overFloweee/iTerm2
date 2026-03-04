@@ -1,0 +1,38 @@
+name: Build iTerm2
+
+on:
+  push:
+    branches: [fix/smart-activity-indicator]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_26.2.app/Contents/Developer
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Build Development
+        run: |
+          make Development BUILD_DIR="$PWD/build"
+
+      - name: Package app
+        run: |
+          cd build/Development
+          ditto -c -k --sequesterRsrc --keepParent iTerm2.app iTerm2.app.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: iTerm2-Development
+          path: build/Development/iTerm2.app.zip
+          retention-days: 30
